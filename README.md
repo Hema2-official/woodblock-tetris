@@ -25,8 +25,9 @@ Well, my time isn't worth spending on this at all, so I opted for agentic coding
 
 ## Screenshots
 
-(to add via Github's GUI)
-
+| Main menu | Paused mid-game |
+| :---: | :---: |
+| <img src="https://github.com/user-attachments/assets/87f9fbf1-83dd-47f5-a3bc-0c67de223ae9" alt="Screenshot_20260502_191930" width="300"> | <img src="https://github.com/user-attachments/assets/6cffc4bf-48cd-42bb-9a92-9585ad3175f5" alt="Screenshot_20260502_192235" width="300"> |
 ## How to build
 
 1. [Install Defold](https://defold.com/download/)
