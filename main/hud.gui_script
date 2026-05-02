@@ -1,0 +1,510 @@
+-- HUD GUI script
+-- Handles gameplay rendering, input, pause overlay, and game over overlay
+
+local TETRIS = require("modules.tetris")
+local SETTINGS = require("modules.settings")
+
+-- Layout constants
+local BLOCK_SIZE = 44
+local BOARD_LEFT = 100
+local BOARD_BOTTOM = 80
+local COLS = 10
+local ROWS = 20
+local PREVIEW_BLOCK_SIZE = 22
+local PREVIEW_X = 580
+local PREVIEW_Y = 890
+
+-- Helpers
+local function board_to_screen(c, r)
+	return BOARD_LEFT + c * BLOCK_SIZE + BLOCK_SIZE/2, BOARD_BOTTOM + r * BLOCK_SIZE + BLOCK_SIZE/2
+end
+
+local function screen_x_to_col(x)
+	return math.floor((x - BOARD_LEFT) / BLOCK_SIZE)
+end
+
+local function create_box_node(x, y, w, h, anim, z)
+	local node = gui.new_box_node(vmath.vector3(x, y, z or 0), vmath.vector3(w, h, 0))
+	gui.set_texture(node, hash("main"))
+	if anim then
+		gui.play_flipbook(node, hash(anim))
+	end
+	gui.set_pivot(node, gui.PIVOT_CENTER)
+	return node
+end
+
+local function create_text_node(text, x, y, scale)
+	local node = gui.new_text_node(vmath.vector3(x, y, 0), text)
+	gui.set_font(node, hash("system_font"))
+	gui.set_text(node, text)
+	gui.set_color(node, vmath.vector4(1, 1, 1, 1))
+	gui.set_scale(node, vmath.vector3(scale, scale, 1))
+	gui.set_pivot(node, gui.PIVOT_CENTER)
+	return node
+end
+
+function init(self)
+	self.showing = false
+	self.paused = false
+	self.game_over = false
+	self.game = nil
+	self.drop_timer = 0
+	self.drop_interval = 0.75
+	self.input_handler = nil
+	self.line_clear_anim = nil
+
+	-- Board background nodes (block_empty)
+	self.bg_nodes = {}
+	self.block_nodes = {}
+	for r = 0, ROWS - 1 do
+		for c = 0, COLS - 1 do
+			local x, y = board_to_screen(c, r)
+			local bg = create_box_node(x, y, BLOCK_SIZE, BLOCK_SIZE, "block_empty", 0)
+			table.insert(self.bg_nodes, bg)
+			local blk = create_box_node(x, y, BLOCK_SIZE, BLOCK_SIZE, "block_full", 0)
+			gui.set_enabled(blk, false)
+			table.insert(self.block_nodes, blk)
+		end
+	end
+
+	-- Active piece nodes
+	self.piece_nodes = {}
+	for i = 1, 4 do
+		local n = create_box_node(0, 0, BLOCK_SIZE, BLOCK_SIZE, "block_full", 0)
+		gui.set_enabled(n, false)
+		table.insert(self.piece_nodes, n)
+	end
+
+	-- Ghost piece nodes
+	self.ghost_nodes = {}
+	for i = 1, 4 do
+		local n = create_box_node(0, 0, BLOCK_SIZE, BLOCK_SIZE, "block_full", 0)
+		gui.set_color(n, vmath.vector4(1, 1, 1, 0.4))
+		gui.set_enabled(n, false)
+		table.insert(self.ghost_nodes, n)
+	end
+
+	-- Next preview nodes
+	self.next_nodes = {}
+	for i = 1, 4 do
+		local n = create_box_node(0, 0, PREVIEW_BLOCK_SIZE, PREVIEW_BLOCK_SIZE, "block_full", 0)
+		gui.set_enabled(n, false)
+		table.insert(self.next_nodes, n)
+	end
+
+	-- HUD
+	self.level_node = create_text_node("Level 1", 80, 1090, 0.4)
+	self.score_node = create_text_node("0", 320, 1090, 0.4)
+	self.pause_btn = create_text_node("||", 590, 1090, 0.4)
+
+	-- "Next" label
+	self.next_label = create_text_node("Next", 600, 960, 0.36)
+
+	-- Pause overlay
+	self.pause_overlay = {}
+	local p_title = create_text_node("Paused", 320, 800, 0.8)
+	table.insert(self.pause_overlay, p_title)
+
+	local p_cont_bg = create_box_node(320, 650, 260, 70, "block_empty", 0)
+	gui.set_color(p_cont_bg, vmath.vector4(0.3, 0.2, 0.1, 0.9))
+	table.insert(self.pause_overlay, p_cont_bg)
+	local p_cont = create_text_node("Continue", 320, 650, 0.4)
+	table.insert(self.pause_overlay, p_cont)
+
+	local p_res_bg = create_box_node(320, 540, 260, 70, "block_empty", 0)
+	gui.set_color(p_res_bg, vmath.vector4(0.3, 0.2, 0.1, 0.9))
+	table.insert(self.pause_overlay, p_res_bg)
+	local p_restart = create_text_node("Restart", 320, 540, 0.4)
+	table.insert(self.pause_overlay, p_restart)
+
+	local p_home_bg = create_box_node(320, 430, 260, 70, "block_empty", 0)
+	gui.set_color(p_home_bg, vmath.vector4(0.3, 0.2, 0.1, 0.9))
+	table.insert(self.pause_overlay, p_home_bg)
+	local p_home = create_text_node("Home", 320, 430, 0.4)
+	table.insert(self.pause_overlay, p_home)
+
+	-- Game over overlay
+	self.game_over_overlay = {}
+	local go_title = create_text_node("Game Over", 320, 820, 0.8)
+	table.insert(self.game_over_overlay, go_title)
+
+	self.go_score_node = create_text_node("Score: 0", 320, 720, 0.4)
+	table.insert(self.game_over_overlay, self.go_score_node)
+
+	local go_res_bg = create_box_node(320, 560, 260, 70, "block_empty", 0)
+	gui.set_color(go_res_bg, vmath.vector4(0.3, 0.2, 0.1, 0.9))
+	table.insert(self.game_over_overlay, go_res_bg)
+	local go_restart = create_text_node("Restart", 320, 560, 0.4)
+	table.insert(self.game_over_overlay, go_restart)
+
+	local go_home_bg = create_box_node(320, 450, 260, 70, "block_empty", 0)
+	gui.set_color(go_home_bg, vmath.vector4(0.3, 0.2, 0.1, 0.9))
+	table.insert(self.game_over_overlay, go_home_bg)
+	local go_home = create_text_node("Home", 320, 450, 0.4)
+	table.insert(self.game_over_overlay, go_home)
+
+	-- Overlay buttons for click detection
+	self.overlay_buttons = {
+		{ node = p_cont_bg, action = "continue" },
+		{ node = p_cont, action = "continue" },
+		{ node = p_res_bg, action = "restart" },
+		{ node = p_restart, action = "restart" },
+		{ node = p_home_bg, action = "home" },
+		{ node = p_home, action = "home" },
+		{ node = go_res_bg, action = "restart" },
+		{ node = go_restart, action = "restart" },
+		{ node = go_home_bg, action = "home" },
+		{ node = go_home, action = "home" },
+	}
+
+	-- Hide everything initially
+	hide_all(self)
+end
+
+function hide_all(self)
+	self.showing = false
+	self.paused = false
+	self.game_over = false
+	msg.post(".", "release_input_focus")
+
+	for _, n in ipairs(self.bg_nodes) do gui.set_enabled(n, false) end
+	for _, n in ipairs(self.block_nodes) do gui.set_enabled(n, false) end
+	for _, n in ipairs(self.piece_nodes) do gui.set_enabled(n, false) end
+	for _, n in ipairs(self.ghost_nodes) do gui.set_enabled(n, false) end
+	for _, n in ipairs(self.next_nodes) do gui.set_enabled(n, false) end
+	gui.set_enabled(self.level_node, false)
+	gui.set_enabled(self.score_node, false)
+	gui.set_enabled(self.pause_btn, false)
+	gui.set_enabled(self.next_label, false)
+
+	for _, n in ipairs(self.pause_overlay) do gui.set_enabled(n, false) end
+	for _, n in ipairs(self.game_over_overlay) do gui.set_enabled(n, false) end
+end
+
+function show_playing(self)
+	self.showing = true
+	self.paused = false
+	self.game_over = false
+	self.line_clear_anim = nil
+	msg.post(".", "acquire_input_focus")
+
+	local level_up_lines = SETTINGS.get("level_up_lines")
+	self.game = TETRIS.new_game(level_up_lines)
+	self.drop_timer = 0
+	self.drop_interval = TETRIS.drop_speed(self.game)
+
+	for _, n in ipairs(self.bg_nodes) do gui.set_enabled(n, true) end
+	gui.set_enabled(self.level_node, true)
+	gui.set_enabled(self.score_node, true)
+	gui.set_enabled(self.pause_btn, true)
+	gui.set_enabled(self.next_label, true)
+
+	for _, n in ipairs(self.pause_overlay) do gui.set_enabled(n, false) end
+	for _, n in ipairs(self.game_over_overlay) do gui.set_enabled(n, false) end
+
+	update_display(self)
+end
+
+function update_display(self)
+	if not self.game then return end
+	local g = self.game
+
+	-- Board blocks
+	for r = 0, ROWS - 1 do
+		for c = 0, COLS - 1 do
+			local idx = c + r * COLS + 1
+			gui.set_enabled(self.block_nodes[idx], g.board[idx])
+		end
+	end
+
+	-- Active piece
+	local cells = TETRIS.get_piece_absolute_cells(g)
+	for i = 1, 4 do
+		if cells[i] then
+			local x, y = board_to_screen(cells[i].col, cells[i].row)
+			gui.set_position(self.piece_nodes[i], vmath.vector3(x, y, 0))
+			gui.set_enabled(self.piece_nodes[i], true)
+		else
+			gui.set_enabled(self.piece_nodes[i], false)
+		end
+	end
+
+	-- Ghost piece
+	local ghost_enabled = SETTINGS.get("ghost_piece")
+	local ghost_cells = TETRIS.get_ghost_absolute_cells(g)
+	for i = 1, 4 do
+		if ghost_enabled and ghost_cells[i] then
+			local x, y = board_to_screen(ghost_cells[i].col, ghost_cells[i].row)
+			gui.set_position(self.ghost_nodes[i], vmath.vector3(x, y, 0))
+			gui.set_enabled(self.ghost_nodes[i], true)
+		else
+			gui.set_enabled(self.ghost_nodes[i], false)
+		end
+	end
+
+	-- Next preview
+	local next_cells = TETRIS.get_next_piece_cells(g)
+	for i = 1, 4 do
+		if next_cells[i] then
+			local x = PREVIEW_X + next_cells[i].col * PREVIEW_BLOCK_SIZE
+			local y = PREVIEW_Y + next_cells[i].row * PREVIEW_BLOCK_SIZE
+			gui.set_position(self.next_nodes[i], vmath.vector3(x, y, 1))
+			gui.set_enabled(self.next_nodes[i], true)
+		else
+			gui.set_enabled(self.next_nodes[i], false)
+		end
+	end
+
+	-- HUD text
+	gui.set_text(self.level_node, "Level " .. tostring(g.level))
+	gui.set_text(self.score_node, tostring(g.score))
+end
+
+function update(self, dt)
+	if not self.showing or self.paused or self.game_over or not self.game then return end
+
+	-- Line clear animation
+	if self.line_clear_anim then
+		self.line_clear_anim.timer = self.line_clear_anim.timer + dt
+		local t = self.line_clear_anim.timer / self.line_clear_anim.duration
+		if t >= 1 then
+			for _, n in ipairs(self.line_clear_anim.nodes) do
+				gui.delete_node(n)
+			end
+			self.line_clear_anim = nil
+		else
+			for _, n in ipairs(self.line_clear_anim.nodes) do
+				local pos = gui.get_position(n)
+				pos.y = pos.y - dt * 400
+				gui.set_position(n, pos)
+				local alpha = math.max(0, 1 - t)
+				gui.set_color(n, vmath.vector4(1, 1, 1, alpha))
+				local scale = math.max(0.3, 1 - t * 0.7)
+				gui.set_scale(n, vmath.vector3(scale, scale, 1))
+			end
+		end
+		return
+	end
+
+	-- Normal drop
+	self.drop_timer = self.drop_timer + dt
+	if self.drop_timer >= self.drop_interval then
+		self.drop_timer = self.drop_timer - self.drop_interval
+		if not TETRIS.move_piece(self.game, 0, -1) then
+			local cleared = TETRIS.lock_piece(self.game)
+			if #cleared > 0 then
+				trigger_line_clear_anim(self, cleared)
+			end
+			if self.game.game_over then
+				self.game_over = true
+				msg.post("/go#main", "game_over")
+				show_game_over(self)
+				return
+			end
+		end
+		self.drop_interval = TETRIS.drop_speed(self.game)
+		update_display(self)
+	end
+end
+
+function trigger_line_clear_anim(self, rows)
+	self.line_clear_anim = {
+		timer = 0,
+		duration = 0.35,
+		nodes = {}
+	}
+	for _, r in ipairs(rows) do
+		for c = 0, COLS - 1 do
+			local x, y = board_to_screen(c, r)
+			local n = create_box_node(x, y, BLOCK_SIZE, BLOCK_SIZE, "block_full", 0)
+			table.insert(self.line_clear_anim.nodes, n)
+		end
+	end
+end
+
+function on_input(self, action_id, action)
+	if not self.showing then return false end
+
+	-- Overlay input (pause or game over)
+	if self.paused or self.game_over then
+		if action_id == hash("touch") and action.released then
+			local pos = vmath.vector3(action.x, action.y, 0)
+			for _, b in ipairs(self.overlay_buttons) do
+				if gui.pick_node(b.node, pos.x, pos.y) then
+					handle_overlay_button(self, b.action)
+					return true
+				end
+			end
+		end
+		return false
+	end
+
+	-- Block input during line clear animation
+	if self.line_clear_anim then
+		return false
+	end
+
+	-- Keyboard controls
+	if action_id == hash("move_left") and action.pressed then
+		TETRIS.move_piece(self.game, -1, 0)
+		update_display(self)
+		return true
+	elseif action_id == hash("move_right") and action.pressed then
+		TETRIS.move_piece(self.game, 1, 0)
+		update_display(self)
+		return true
+	elseif action_id == hash("rotate") and action.pressed then
+		TETRIS.rotate_piece(self.game, true)
+		update_display(self)
+		return true
+	elseif action_id == hash("hard_drop") and action.pressed then
+		local _, cleared = TETRIS.hard_drop(self.game)
+		if #cleared > 0 then
+			trigger_line_clear_anim(self, cleared)
+		end
+		if self.game.game_over then
+			self.game_over = true
+			msg.post("/go#main", "game_over")
+			show_game_over(self)
+			return true
+		end
+		self.drop_interval = TETRIS.drop_speed(self.game)
+		update_display(self)
+		return true
+	end
+
+	-- Touch / gesture controls
+	if action_id == hash("touch") then
+		if action.pressed then
+			self.touch_start_pos = vmath.vector3(action.x, action.y, 0)
+			self.touch_start_time = socket.gettime()
+			self.touch_held = true
+			self.touch_has_moved_horiz = false
+			self.touch_is_drop = false
+			if self.game then
+				self.drag_start_col = self.game.current_piece.col
+			end
+		elseif action.released then
+			self.touch_held = false
+			local pos = vmath.vector3(action.x, action.y, 0)
+			-- Pause button
+			if gui.pick_node(self.pause_btn, pos.x, pos.y) then
+				msg.post("/go#main", "pause_game")
+				return true
+			end
+			-- Gesture classification on release
+			local dx = action.x - self.touch_start_pos.x
+			local dy = action.y - self.touch_start_pos.y
+			local dist = math.sqrt(dx*dx + dy*dy)
+			local duration = (socket.gettime() - self.touch_start_time) * 1000
+			local sens = SETTINGS.get("swipe_sensitivity")
+
+			if duration < 250 and dist < sens * 0.5 then
+				-- Tap -> rotate
+				TETRIS.rotate_piece(self.game, true)
+				update_display(self)
+			elseif self.touch_is_drop and dy < 0 and math.abs(dy) > math.abs(dx) then
+				-- Confirmed downward swipe -> hard drop
+				local _, cleared = TETRIS.hard_drop(self.game)
+				if #cleared > 0 then
+					trigger_line_clear_anim(self, cleared)
+				end
+				if self.game.game_over then
+					self.game_over = true
+					msg.post("/go#main", "game_over")
+					show_game_over(self)
+					return true
+				end
+				self.drop_interval = TETRIS.drop_speed(self.game)
+				update_display(self)
+			end
+			return true
+		elseif action.value == 1 then
+			-- Touch held and moving
+			if self.touch_held and self.game then
+				local dy = action.y - self.touch_start_pos.y
+				local sens = SETTINGS.get("swipe_sensitivity")
+				if not self.touch_is_drop and dy < -sens * 0.5 then
+					-- Downward movement exceeded threshold -> lock into drop mode
+					self.touch_is_drop = true
+				end
+				if not self.touch_is_drop then
+					-- Horizontal drag
+					local delta = screen_x_to_col(action.x) - screen_x_to_col(self.touch_start_pos.x)
+					local target_col = self.drag_start_col + delta
+					local current_col = self.game.current_piece.col
+					while current_col ~= target_col do
+						local dir = target_col > current_col and 1 or -1
+						if TETRIS.move_piece(self.game, dir, 0) then
+							current_col = current_col + dir
+							self.touch_has_moved_horiz = true
+						else
+							break
+						end
+					end
+					update_display(self)
+				end
+			end
+		end
+		return true
+	end
+
+	return false
+end
+
+function handle_overlay_button(self, action)
+	if action == "continue" then
+		msg.post("/go#main", "resume_game")
+	elseif action == "restart" then
+		msg.post("/go#main", "restart_game")
+	elseif action == "home" then
+		msg.post("/go#main", "go_menu")
+	end
+end
+
+function show_pause(self)
+	self.paused = true
+	for _, n in ipairs(self.pause_overlay) do
+		gui.set_enabled(n, true)
+	end
+end
+
+function hide_pause(self)
+	self.paused = false
+	for _, n in ipairs(self.pause_overlay) do
+		gui.set_enabled(n, false)
+	end
+end
+
+function show_game_over(self)
+	self.game_over = true
+	SETTINGS.set_high_score(self.game.score)
+	gui.set_text(self.go_score_node, "Score: " .. tostring(self.game.score))
+	for _, n in ipairs(self.game_over_overlay) do
+		gui.set_enabled(n, true)
+	end
+end
+
+function hide_game_over(self)
+	for _, n in ipairs(self.game_over_overlay) do
+		gui.set_enabled(n, false)
+	end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("show_playing") then
+		show_playing(self)
+	elseif message_id == hash("hide_hud") then
+		hide_all(self)
+	elseif message_id == hash("show_pause") then
+		show_pause(self)
+	elseif message_id == hash("show_game_over") then
+		-- Game over is handled internally
+	elseif message_id == hash("resume_playing") then
+		self.paused = false
+		hide_pause(self)
+		msg.post(".", "acquire_input_focus")
+	elseif message_id == hash("restart_game") then
+		show_playing(self)
+	end
+end

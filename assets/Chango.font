@@ -1,0 +1,4 @@
+font: "/assets/Chango-Regular.ttf"
+material: "/builtins/fonts/font.material"
+size: 56
+characters: " !\"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"

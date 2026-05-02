@@ -1,0 +1,80 @@
+-- Main state controller
+-- Manages switching between menu, gameplay, pause, game over, and settings screens
+
+local SETTINGS = require("modules.settings")
+
+local STATE = {
+	MENU = hash("menu"),
+	PLAYING = hash("playing"),
+	PAUSED = hash("paused"),
+	GAME_OVER = hash("game_over"),
+	SETTINGS = hash("settings"),
+}
+
+function init(self)
+	msg.post(".", "acquire_input_focus")
+	math.randomseed(socket.gettime() * 1000)
+	self.state = STATE.MENU
+
+	-- Show menu, hide others
+	msg.post("/menu#menu_gui", "show_menu")
+	msg.post("/hud#hud_gui", "hide_hud")
+end
+
+function change_state(self, new_state)
+	local old_state = self.state
+	self.state = new_state
+
+	if new_state == STATE.MENU then
+		msg.post("/menu#menu_gui", "show_menu")
+		msg.post("/hud#hud_gui", "hide_hud")
+	elseif new_state == STATE.PLAYING then
+		msg.post("/menu#menu_gui", "hide_menu")
+		if old_state == STATE.PAUSED then
+			msg.post("/hud#hud_gui", "resume_playing")
+		else
+			msg.post("/hud#hud_gui", "show_playing")
+		end
+	elseif new_state == STATE.PAUSED then
+		msg.post("/hud#hud_gui", "show_pause")
+	elseif new_state == STATE.GAME_OVER then
+		msg.post("/hud#hud_gui", "show_game_over")
+	elseif new_state == STATE.SETTINGS then
+		msg.post("/menu#menu_gui", "show_settings")
+	end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("start_game") then
+		change_state(self, STATE.PLAYING)
+	elseif message_id == hash("pause_game") then
+		if self.state == STATE.PLAYING then
+			change_state(self, STATE.PAUSED)
+		end
+	elseif message_id == hash("resume_game") then
+		if self.state == STATE.PAUSED then
+			change_state(self, STATE.PLAYING)
+		end
+	elseif message_id == hash("game_over") then
+		change_state(self, STATE.GAME_OVER)
+	elseif message_id == hash("go_menu") then
+		change_state(self, STATE.MENU)
+	elseif message_id == hash("open_settings") then
+		change_state(self, STATE.SETTINGS)
+	elseif message_id == hash("close_settings") then
+		change_state(self, STATE.MENU)
+	elseif message_id == hash("restart_game") then
+		msg.post("/hud#hud_gui", "restart_game")
+		change_state(self, STATE.PLAYING)
+	end
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("pause") and action.pressed then
+		if self.state == STATE.PLAYING then
+			change_state(self, STATE.PAUSED)
+		elseif self.state == STATE.PAUSED then
+			change_state(self, STATE.PLAYING)
+		end
+	end
+end

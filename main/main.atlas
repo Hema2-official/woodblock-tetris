@@ -1,0 +1,10 @@
+images {
+  image: "/assets/background.png"
+}
+images {
+  image: "/assets/block_empty.png"
+}
+images {
+  image: "/assets/block_full.png"
+}
+extrude_borders: 2

@@ -1,0 +1,245 @@
+-- Menu GUI script
+-- Handles main menu, settings screen
+
+local SETTINGS = require("modules.settings")
+
+-- Colors
+local COLOR_WHITE = vmath.vector4(1, 1, 1, 1)
+local COLOR_BROWN = vmath.vector4(0.4, 0.25, 0.1, 1)
+local COLOR_TRANSPARENT = vmath.vector4(0, 0, 0, 0)
+
+local function create_text_node(self, text, x, y, size)
+	local node = gui.new_text_node(vmath.vector3(x, y, 0), text)
+	gui.set_text(node, text)
+	gui.set_color(node, COLOR_WHITE)
+	gui.set_scale(node, vmath.vector3(size/32, size/32, 1))
+	gui.set_pivot(node, gui.PIVOT_CENTER)
+	return node
+end
+
+local function create_box_node(self, x, y, w, h, anim)
+	local node = gui.new_box_node(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0))
+	gui.set_texture(node, hash("main"))
+	if anim then
+		gui.play_flipbook(node, hash(anim))
+	end
+	gui.set_pivot(node, gui.PIVOT_CENTER)
+	return node
+end
+
+function init(self)
+	self.active = false
+	self.nodes = {}
+	self.settings_nodes = {}
+	self.showing_settings = false
+	self.buttons = {}
+	self.settings_buttons = {}
+
+	-- Title
+	table.insert(self.nodes, create_text_node(self, "BlockWood", 320, 900, 36))
+
+	-- High score
+	self.high_score_node = create_text_node(self, "", 320, 780, 20)
+	table.insert(self.nodes, self.high_score_node)
+
+	-- Play button background
+	local play_bg = create_box_node(self, 320, 550, 300, 80, "block_empty")
+	table.insert(self.nodes, play_bg)
+
+	-- Play button text
+	local play_text = create_text_node(self, "Play", 320, 550, 18)
+	table.insert(self.nodes, play_text)
+
+	-- Settings button background
+	local set_bg = create_box_node(self, 320, 420, 300, 80, "block_empty")
+	table.insert(self.nodes, set_bg)
+
+	-- Settings button text
+	local set_text = create_text_node(self, "Settings", 320, 420, 16)
+	table.insert(self.nodes, set_text)
+
+	-- Store interactable nodes
+	self.buttons = {
+		{ node = play_text, action = "play" },
+		{ node = play_bg, action = "play" },
+		{ node = set_text, action = "settings" },
+		{ node = set_bg, action = "settings" },
+	}
+
+	-- Hide all initially
+	for _, n in ipairs(self.nodes) do
+		gui.set_enabled(n, false)
+	end
+end
+
+function update_high_score(self)
+	local hs = SETTINGS.get("high_score")
+	gui.set_text(self.high_score_node, tostring(hs))
+end
+
+function show_menu(self)
+	self.showing_settings = false
+	self.active = true
+	msg.post(".", "acquire_input_focus")
+	update_high_score(self)
+
+	for _, n in ipairs(self.nodes) do
+		gui.set_enabled(n, true)
+	end
+
+	for _, n in ipairs(self.settings_nodes) do
+		gui.set_enabled(n, false)
+	end
+end
+
+function hide_menu(self)
+	self.active = false
+	msg.post(".", "release_input_focus")
+	for _, n in ipairs(self.nodes) do
+		gui.set_enabled(n, false)
+	end
+	for _, n in ipairs(self.settings_nodes) do
+		gui.set_enabled(n, false)
+	end
+end
+
+function show_settings(self)
+	self.showing_settings = true
+	self.active = true
+	msg.post(".", "acquire_input_focus")
+
+	for _, n in ipairs(self.nodes) do
+		gui.set_enabled(n, false)
+	end
+	for _, n in ipairs(self.settings_nodes) do
+		gui.set_enabled(n, true)
+	end
+
+	update_settings_display(self)
+end
+
+function update_settings_display(self)
+	if not self.showing_settings then return end
+	local ghost = SETTINGS.get("ghost_piece") and "ON" or "OFF"
+	local lines = tostring(SETTINGS.get("level_up_lines"))
+	local sens = tostring(SETTINGS.get("swipe_sensitivity"))
+
+	gui.set_text(self.ghost_node, "Ghost: " .. ghost)
+	gui.set_text(self.lines_node, "Lines/Level: " .. lines)
+	gui.set_text(self.sens_node, "Sensitivity: " .. sens)
+end
+
+function init_settings(self)
+	-- Settings title
+	table.insert(self.settings_nodes, create_text_node(self, "Settings", 320, 1000, 26))
+
+	-- Ghost toggle
+	self.ghost_node = create_text_node(self, "Ghost: ON", 320, 850, 18)
+	table.insert(self.settings_nodes, self.ghost_node)
+
+	-- Level up lines
+	self.lines_node = create_text_node(self, "Lines/Level: 10", 320, 760, 18)
+	table.insert(self.settings_nodes, self.lines_node)
+
+	-- Sensitivity
+	self.sens_node = create_text_node(self, "Sensitivity: 30", 320, 670, 18)
+	table.insert(self.settings_nodes, self.sens_node)
+
+	-- Reset high score
+	local reset_node = create_text_node(self, "Reset High Score", 320, 540, 18)
+	table.insert(self.settings_nodes, reset_node)
+
+	-- Back button
+	local back_bg = create_box_node(self, 320, 200, 200, 70, "block_empty")
+	table.insert(self.settings_nodes, back_bg)
+
+	local back_text = create_text_node(self, "Back", 320, 200, 18)
+	table.insert(self.settings_nodes, back_text)
+
+	-- Settings buttons
+	self.settings_buttons = {
+		{ node = self.ghost_node, action = "toggle_ghost" },
+		{ node = self.lines_node, action = "cycle_lines" },
+		{ node = self.sens_node, action = "cycle_sens" },
+		{ node = reset_node, action = "reset_hs" },
+		{ node = back_text, action = "back" },
+		{ node = back_bg, action = "back" },
+	}
+
+	for _, n in ipairs(self.settings_nodes) do
+		gui.set_enabled(n, false)
+	end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("show_menu") then
+		show_menu(self)
+	elseif message_id == hash("hide_menu") then
+		hide_menu(self)
+	elseif message_id == hash("show_settings") then
+		if not self.settings_initialized then
+			init_settings(self)
+			self.settings_initialized = true
+		end
+		show_settings(self)
+	end
+end
+
+function on_input(self, action_id, action)
+	if not self.active then return false end
+	if action_id ~= hash("touch") then return false end
+
+	if action.pressed then
+		self.pressed_pos = vmath.vector3(action.x, action.y, 0)
+	end
+
+	if action.released then
+		local pos = vmath.vector3(action.x, action.y, 0)
+		local buttons = self.showing_settings and (self.settings_buttons or {}) or (self.buttons or {})
+		for _, b in ipairs(buttons) do
+			if b and b.node and gui.pick_node(b.node, pos.x, pos.y) then
+				handle_button(self, b.action)
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+function handle_button(self, action)
+	if action == "play" then
+		msg.post("/go#main", "start_game")
+	elseif action == "settings" then
+		msg.post("/go#main", "open_settings")
+	elseif action == "toggle_ghost" then
+		local current = SETTINGS.get("ghost_piece")
+		SETTINGS.set("ghost_piece", not current)
+		update_settings_display(self)
+	elseif action == "cycle_lines" then
+		local vals = {5, 10, 15, 20, 25}
+		local current = SETTINGS.get("level_up_lines")
+		local idx = 1
+		for i, v in ipairs(vals) do
+			if v == current then idx = i + 1; break end
+		end
+		if idx > #vals then idx = 1 end
+		SETTINGS.set("level_up_lines", vals[idx])
+		update_settings_display(self)
+	elseif action == "cycle_sens" then
+		local vals = {15, 20, 30, 40, 60}
+		local current = SETTINGS.get("swipe_sensitivity")
+		local idx = 1
+		for i, v in ipairs(vals) do
+			if v == current then idx = i + 1; break end
+		end
+		if idx > #vals then idx = 1 end
+		SETTINGS.set("swipe_sensitivity", vals[idx])
+		update_settings_display(self)
+	elseif action == "reset_hs" then
+		SETTINGS.reset_high_score()
+		update_settings_display(self)
+	elseif action == "back" then
+		msg.post("/go#main", "close_settings")
+	end
+end
